@@ -1275,6 +1275,243 @@ pages.talents = {
 }
 
 ---------------------------------------------------------------------------
+-- Seite: Beim Lehrer (Eltern markieren, was das Kind mitnehmen soll)
+---------------------------------------------------------------------------
+
+local function ScrollList(parent, visible, rowH, buildRow, updateRow)
+    local L = { rows = {}, data = {}, offset = 0, visible = visible }
+    for i = 1, visible do
+        local r = buildRow(parent, i)
+        r:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -(i - 1) * rowH)
+        r:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
+        r:SetHeight(rowH - 4)
+        L.rows[i] = r
+    end
+    function L:Refresh()
+        local maxOff = math.max(0, #self.data - self.visible)
+        if self.offset > maxOff then self.offset = maxOff end
+        for i, r in ipairs(self.rows) do
+            local item = self.data[self.offset + i]
+            if item then r:Show(); updateRow(r, item) else r:Hide() end
+        end
+    end
+    function L:SetData(d) self.data = d; self:Refresh() end
+    function L:Scroll(d) self.offset = math.max(0, self.offset + d); self:Refresh() end
+    parent:EnableMouseWheel(true)
+    parent:SetScript("OnMouseWheel", function(_, delta) L:Scroll(-delta) end)
+    return L
+end
+
+local MARK_LABEL = { [0] = "Normal", [1] = "Wichtig", [2] = "Auslassen" }
+local MARK_COLOR = { [0] = C.dim, [1] = C.sun, [2] = C.pink }
+
+local function TeachClass()
+    if IsParent() then return KG.db.partner and KG.db.partner.class end
+    return KG.MyClass()
+end
+
+local function RankLevels(a)
+    local lv = {}
+    for i, r in ipairs(a.ranks) do
+        if i > 6 then lv[#lv + 1] = "..." break end
+        lv[#lv + 1] = tostring(r.level)
+    end
+    return (#a.ranks > 1 and "Ränge ab Level " or "ab Level ") .. table.concat(lv, ", ")
+end
+
+pages.teacher = {
+    title = function() return IsParent() and "Lehrer-Tipps" or "Beim Lehrer" end,
+    sub = function()
+        return IsParent() and "Markiere, was dein Kind beim Klassenlehrer mitnehmen soll. Das erscheint bei Level-Ups und am Lehrerfenster."
+            or "Deine Begleitung markiert, was du beim Klassenlehrer mitnehmen sollst. Am Lehrerfenster erscheint die Empfehlung automatisch."
+    end,
+    build = function(p)
+        p.emptyKid = EmptyState(p, "Trage zuerst ein, welche Klasse dein Kind spielt. Danach kannst du hier die Lehrer-Tipps markieren.", "Mein Kind eintragen", function() ShowPage("partner") end)
+
+        p.main = CreateFrame("Frame", nil, p)
+        p.main:SetAllPoints()
+        p.intro = Text(p.main, 12, C.text)
+        p.intro:SetPoint("TOPLEFT", 0, 0)
+        p.intro:SetWidth(BODY_W)
+        p.intro:SetHeight(32)
+
+        local host = CreateFrame("Frame", nil, p.main)
+        host:SetPoint("TOPLEFT", 0, -40)
+        host:SetSize(BODY_W - 92, 9 * 40)
+        p.list = ScrollList(host, 9, 40, function(h)
+            local row = CreateFrame("Frame", nil, h, "BackdropTemplate")
+            Flat(row, C.card)
+            row.lvl = Text(row, 15, C.sun)
+            row.lvl:SetPoint("LEFT", 10, 0)
+            row.lvl:SetWidth(34)
+            row.lvl:SetJustifyV("MIDDLE")
+            row.icon = row:CreateTexture(nil, "ARTWORK")
+            row.icon:SetSize(26, 26)
+            row.icon:SetPoint("LEFT", 50, 0)
+            row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+            row.name = Text(row, 13, C.text)
+            row.name:SetPoint("TOPLEFT", 84, -5)
+            row.name:SetWidth(300)
+            row.desc = Text(row, 10, C.dim)
+            row.desc:SetPoint("TOPLEFT", row.name, "BOTTOMLEFT", 0, -2)
+            row.desc:SetWidth(330)
+            row.state = Text(row, 11, C.dim)
+            row.state:SetPoint("RIGHT", -150, 0)
+            row.state:SetWidth(110)
+            row.state:SetJustifyH("RIGHT")
+            row.state:SetJustifyV("MIDDLE")
+            row.btn = Btn(row, "", 120, 26, "ghost", function(self)
+                local r = self:GetParent()
+                if not r.a or not p.cls then return end
+                KG.SetTeachMark(p.cls, r.a, (KG.TeachMark(p.cls, r.a) + 1) % 3)
+                KG.RefreshUI()
+            end)
+            row.btn:SetPoint("RIGHT", -10, 0)
+            return row
+        end, function(row, a)
+            local cls, parent = p.cls, IsParent()
+            local mark = KG.TeachMark(cls, a)
+            row.a = a
+            row.lvl:SetText(a.first)
+            row.icon:SetTexture(KG.AbilityIcon(a))
+            row.name:SetText(KG.AbilityName(a) .. (a.gate ~= 0 and Colored("  Talent", C.dim) or ""))
+            row.desc:SetText(RankLevels(a))
+            if mark == 1 then row:SetBackdropBorderColor(unpack(C.sun)) elseif mark == 2 then row:SetBackdropBorderColor(unpack(C.pink)) else row:SetBackdropBorderColor(unpack(C.edge)) end
+            row.icon:SetDesaturated(mark == 2)
+            row.icon:SetAlpha(mark == 2 and 0.45 or 1)
+            row.btn:SetShown(parent)
+            row.btn:SetLabel(MARK_LABEL[mark])
+            row.btn.label:SetTextColor(unpack(MARK_COLOR[mark]))
+            if parent then
+                row.state:SetText("")
+            else
+                local st, rank = KG.TeachStatus(a, UnitLevel and UnitLevel("player") or 1)
+                local txt, col = "", C.dim
+                if mark == 2 then txt = "Auslassen"; col = C.pink
+                elseif st == "learned" then txt = "Gelernt"; col = C.dim
+                elseif st == "ready" then txt = (mark == 1 and "Wichtig, jetzt" or "Level erreicht"); col = mark == 1 and C.sun or C.mint
+                elseif st == "gated" then txt = "Talent nötig"
+                elseif st == "later" then txt = "Später" end
+                if st ~= "ready" and mark == 1 and st ~= "learned" then txt = "Wichtig, " .. txt:lower(); col = C.sun end
+                row.state:SetText(txt)
+                row.state:SetTextColor(unpack(col))
+            end
+        end)
+
+        local side = CreateFrame("Frame", nil, p.main)
+        side:SetPoint("TOPRIGHT", 0, -40)
+        side:SetSize(84, 60)
+        Btn(side, "Hoch", 84, 24, "ghost", function() p.list:Scroll(-4) end):SetPoint("TOPLEFT", 0, 0)
+        Btn(side, "Runter", 84, 24, "ghost", function() p.list:Scroll(4) end):SetPoint("TOPLEFT", 0, -28)
+
+        p.b1 = Btn(p.main, "", 210, 30, "primary", function()
+            if not p.cls then return end
+            if IsParent() then KG.SendTeach(p.cls) else KG.RequestTeach() end
+        end)
+        p.b1:SetPoint("BOTTOMLEFT", 0, 0)
+        p.code = Edit(p.main, BODY_W - 210 - 170 - 16)
+        p.code:SetPoint("LEFT", p.b1, "RIGHT", 8, 0)
+        p.code:SetMaxLetters(0)
+        p.b2 = Btn(p.main, "", 170, 30, "ghost", function()
+            if not p.cls then return end
+            if IsParent() then
+                p.code:SetText(KG.EncodeTeach(p.cls) or "")
+                p.code:SetFocus()
+                p.code:HighlightText()
+                p.info:SetText("Markiert: Strg+C kopiert den Code. Dein Kind fügt ihn auf seiner Lehrer-Seite ein.")
+            else
+                local class, marks = KG.DecodeTeach(p.code:GetText())
+                if not class then p.info:SetText(Colored(marks, C.pink)) return end
+                KG.db.teach[class] = next(marks) and marks or nil
+                p.code:SetText("")
+                KG.RefreshUI()
+                if class ~= KG.MyClass() then
+                    p.info:SetText(Colored("Diese Empfehlung ist für " .. KG.ClassName(class) .. ", dein Charakter ist " .. KG.ClassName(KG.MyClass()) .. ".", C.pink))
+                end
+            end
+        end)
+        p.b2:SetPoint("LEFT", p.code, "RIGHT", 8, 0)
+        p.info = Text(p.main, 10, C.dim)
+        p.info:SetPoint("BOTTOMLEFT", 0, 36)
+        p.info:SetWidth(BODY_W)
+    end,
+    refresh = function(p)
+        local cls, parent = TeachClass(), IsParent()
+        p.cls = cls
+        p.emptyKid:Hide()
+        p.main:Hide()
+        if not cls then p.emptyKid:Show() return end
+        local list = KG.Abilities(cls)
+        if not list then
+            p.emptyKid.text:SetText("Für diese Klasse liegen keine Fähigkeiten-Daten vor.")
+            p.emptyKid.btn:Hide()
+            p.emptyKid:Show()
+            return
+        end
+        p.main:Show()
+        local n1, n2 = 0, 0
+        for _, a in ipairs(list) do
+            local m = KG.TeachMark(cls, a)
+            if m == 1 then n1 = n1 + 1 elseif m == 2 then n2 = n2 + 1 end
+        end
+        if parent then
+            local lvl = KG.db.partner.level
+            p.intro:SetText(("%s (%s%s): %d wichtig, %d ausgelassen. Klicke rechts auf eine Fähigkeit, um zwischen Normal, Wichtig und Auslassen zu wechseln."):format(
+                KG.db.partner.name, ClassText(cls), (lvl and lvl > 1) and (", Level " .. lvl) or "", n1, n2))
+            p.b1:SetLabel("An mein Kind senden")
+            p.b2:SetLabel("Code zeigen")
+        else
+            p.intro:SetText(KG.HasTeach(cls) and ("Empfehlung deiner Begleitung: %d wichtig, %d ausgelassen. Alles andere ist normal."):format(n1, n2)
+                or "Noch keine Empfehlung erhalten. Bitte deine Begleitung, sie dir zu schicken, oder frage sie unten an.")
+            p.b1:SetLabel("Empfehlung anfragen")
+            p.b2:SetLabel("Code übernehmen")
+        end
+        p.info:SetText("")
+        p.list:SetData(list)
+    end,
+}
+
+-- Kleines Fenster neben dem Lehrerfenster
+local trainerPanel
+function KG.ShowTrainerPanel(key, skip, other, hint)
+    if not trainerPanel then
+        trainerPanel = CreateFrame("Frame", "KindergartenTrainerPanel", UIParent, "BackdropTemplate")
+        Flat(trainerPanel, C.bg, C.sun)
+        trainerPanel:SetSize(250, 100)
+        trainerPanel:SetFrameStrata("HIGH")
+        trainerPanel.title = Text(trainerPanel, 12, C.sun)
+        trainerPanel.title:SetPoint("TOPLEFT", 12, -10)
+        trainerPanel.title:SetText("Kindergarten: Empfehlung")
+        trainerPanel.text = Text(trainerPanel, 11, C.text)
+        trainerPanel.text:SetPoint("TOPLEFT", 12, -30)
+        trainerPanel.text:SetWidth(226)
+    end
+    local f = trainerPanel
+    local anchor = _G.ClassTrainerFrame or _G.TrainerFrame or _G.TrainerBuyFrame
+    f:ClearAllPoints()
+    if anchor then f:SetPoint("TOPLEFT", anchor, "TOPRIGHT", 6, -20) else f:SetPoint("RIGHT", UIParent, "RIGHT", -40, 60) end
+    local lines = {}
+    if hint then lines[#lines + 1] = hint end
+    if #key > 0 then
+        lines[#lines + 1] = Colored("Mitnehmen:", C.sun)
+        for _, n in ipairs(key) do lines[#lines + 1] = "  " .. n end
+    end
+    if #skip > 0 then
+        lines[#lines + 1] = Colored("Auslassen:", C.pink)
+        for _, n in ipairs(skip) do lines[#lines + 1] = "  " .. n end
+    end
+    if #key == 0 and #skip == 0 and not hint then lines[#lines + 1] = "Hier ist nichts Besonderes markiert." end
+    if other and other > 0 then lines[#lines + 1] = Colored(other .. " weitere ohne Empfehlung", C.dim) end
+    f.text:SetText(table.concat(lines, "\n"))
+    f:SetHeight(44 + 14 * #lines)
+    f:Show()
+end
+
+function KG.HideTrainerPanel()
+    if trainerPanel then trainerPanel:Hide() end
+end
+
+---------------------------------------------------------------------------
 -- Seite: Mein Plan / So hilfst du
 ---------------------------------------------------------------------------
 
@@ -1439,6 +1676,7 @@ local STEPS = {
     { key = "class", kid = "Meine Klasse", parent = "Passende Klasse" },
     { key = "profs", kid = "Meine Berufe", parent = "Passende Berufe" },
     { key = "talents", kid = "Meine Skillung", parent = "Skillung planen" },
+    { key = "teacher", kid = "Beim Lehrer", parent = "Lehrer-Tipps" },
     { key = "plan", kid = "Mein Plan", parent = "So hilfst du" },
 }
 
@@ -1449,6 +1687,10 @@ local function StepDone(key)
     if key == "quiz" then return KG.QuizDone(KG.QUIZ, db.quiz) end
     if key == "class" then return db.chosenClass ~= nil end
     if key == "profs" then return db.chosenProfs ~= nil end
+    if key == "teacher" then
+        local cls = IsParent() and (db.partner and db.partner.class) or KG.MyClass()
+        return cls ~= nil and KG.HasTeach(cls)
+    end
     if key == "talents" then
         local cls = TalentClass()
         return cls ~= nil and db.builds[cls] ~= nil
@@ -1658,7 +1900,7 @@ end
 -- Kleine Einblendung oben am Bildschirm, Klick öffnet die Skillungs-Seite
 local toast
 local toastStamp = 0
-function KG.ShowToast(text)
+function KG.ShowToast(text, page)
     if not toast then
         toast = CreateFrame("Button", "KindergartenToast", UIParent, "BackdropTemplate")
         Flat(toast, C.bg, C.sun)
@@ -1670,9 +1912,10 @@ function KG.ShowToast(text)
         toast.text:SetWidth(432)
         toast:SetScript("OnClick", function(self)
             self:Hide()
-            KG.OpenPage("talents")
+            KG.OpenPage(self.page or "talents")
         end)
     end
+    toast.page = page or "talents"
     toast.text:SetText(Colored("Kindergarten: ", C.sun) .. text .. " Klicke hier oder öffne /kg.")
     toast:Show()
     toastStamp = toastStamp + 1

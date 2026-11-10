@@ -208,6 +208,9 @@ local function onAddonMessage(prefix, text, channel, sender)
     if kind == "B" or kind == "BQ" then
         if KG.OnTalentMessage then KG.OnTalentMessage(kind, text, channel, sender, short) end
         return
+    elseif kind == "L" or kind == "LQ" then
+        if KG.OnTeachMessage then KG.OnTeachMessage(kind, text, channel, sender, short) end
+        return
     end
     if text == VERSION .. "|Q" then
         if channel == "WHISPER" then rawSend(KG.Encode(KG.BuildProfile()), "WHISPER", sender)
@@ -445,6 +448,9 @@ f:RegisterEvent("CHAT_MSG_ADDON")
 f:RegisterEvent("GROUP_ROSTER_UPDATE")
 f:RegisterEvent("PLAYER_LEVEL_UP")
 pcall(f.RegisterEvent, f, "CHARACTER_POINTS_CHANGED")
+pcall(f.RegisterEvent, f, "TRAINER_SHOW")
+pcall(f.RegisterEvent, f, "TRAINER_UPDATE")
+pcall(f.RegisterEvent, f, "TRAINER_CLOSED")
 f:SetScript("OnEvent", function(_, event, a1, a2, a3, a4)
     if event == "ADDON_LOADED" then
         if a1 ~= ADDON then return end
@@ -455,12 +461,16 @@ f:SetScript("OnEvent", function(_, event, a1, a2, a3, a4)
         db.todo = db.todo or {}
         db.trees = db.trees or {}
         db.builds = db.builds or {}
+        db.teach = db.teach or {}
         db.scale = db.scale or 1
         KG.db = db
         if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then C_ChatInfo.RegisterAddonMessagePrefix(PREFIX)
         elseif RegisterAddonMessagePrefix then RegisterAddonMessagePrefix(PREFIX) end
     elseif event == "PLAYER_LOGIN" then
         if not KG.db then return end
+        if C_Timer and C_Timer.After then
+            C_Timer.After(8, function() if KG.TeachReminder then KG.TeachReminder() end end)
+        end
         if not KG.db.seen and C_Timer and C_Timer.After then
             C_Timer.After(4, function() if KG.ToggleUI and not KG.db.seen then KG.ToggleUI() end end)
         else
@@ -468,10 +478,17 @@ f:SetScript("OnEvent", function(_, event, a1, a2, a3, a4)
         end
     elseif event == "CHAT_MSG_ADDON" then
         onAddonMessage(a1, a2, a3, a4)
+    elseif event == "TRAINER_SHOW" or event == "TRAINER_UPDATE" then
+        if KG.db and KG.UpdateTrainerPanel then pcall(KG.UpdateTrainerPanel) end
+    elseif event == "TRAINER_CLOSED" then
+        if KG.HideTrainerPanel then KG.HideTrainerPanel() end
     elseif event == "PLAYER_LEVEL_UP" or event == "CHARACTER_POINTS_CHANGED" then
         if KG.db and KG.TalentPointsChanged then
-            if C_Timer and C_Timer.After then C_Timer.After(1.5, function() KG.TalentPointsChanged() end)
-            else KG.TalentPointsChanged() end
+            local function check()
+                KG.TalentPointsChanged()
+                if event == "PLAYER_LEVEL_UP" and KG.TeachReminder then KG.TeachReminder() end
+            end
+            if C_Timer and C_Timer.After then C_Timer.After(1.5, check) else check() end
         end
     elseif event == "GROUP_ROSTER_UPDATE" then
         if KG.db and KG.db.role and GetTime and GetTime() - lastAuto > 15 and groupChannel() then
