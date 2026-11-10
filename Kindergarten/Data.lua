@@ -154,10 +154,9 @@ KG.PROFS = {
     mining         = { name = "Bergbau", icon = "Trade_Mining", gather = true, ids = { 2575, 2576, 3564, 10248 },
         desc = "Du baust Erz ab, das dir auf der Minikarte angezeigt wird." },
     leatherworking = { name = "Lederverarbeitung", icon = "Trade_LeatherWorking", needs = "skinning", ids = { 2108, 3104, 3811, 10662 },
-        fits = { HUNTER = true, ROGUE = true, DRUID = true, SHAMAN = true },
         desc = "Du nähst Leder- und Kettenrüstung aus Tierhäuten." },
     tailoring      = { name = "Schneiderei", icon = "Trade_Tailoring", ids = { 3908, 3909, 3910, 12180 },
-        fits = { MAGE = true, WARLOCK = true, PRIEST = true }, shared = "Taschen für euch beide",
+        shared = "Taschen für euch beide",
         desc = "Du nähst Stoffrüstung und Taschen. Stoff lassen viele Gegner einfach fallen." },
     alchemy        = { name = "Alchemie", icon = "Trade_Alchemy", needs = "herbalism", ids = { 2259, 3101, 3464, 11611 },
         shared = "Tränke für euch beide",
@@ -166,10 +165,8 @@ KG.PROFS = {
         shared = "Verzauberungen für euch beide",
         desc = "Du zerlegst magische Gegenstände und verzauberst damit Ausrüstung." },
     blacksmithing  = { name = "Schmiedekunst", icon = "Trade_BlackSmithing", needs = "mining", ids = { 2018, 3100, 3538, 9785 },
-        fits = { WARRIOR = true, PALADIN = true },
         desc = "Du schmiedest Waffen und schwere Rüstung aus Erz." },
     engineering    = { name = "Ingenieurskunst", icon = "Trade_Engineering", needs = "mining", ids = { 4036, 4037, 4038, 12656 },
-        fits = { HUNTER = true },
         desc = "Du baust Bomben, Gewehre, Zielfernrohre und verrückte Geräte." },
     firstaid       = { name = "Erste Hilfe", icon = "Spell_Holy_SealOfSacrifice", secondary = true, ids = { 3273, 3274, 7924, 10846 },
         desc = "Verbände aus Stoff heilen dich ohne Mana." },
@@ -177,6 +174,46 @@ KG.PROFS = {
         desc = "Gekochtes Essen heilt und stärkt euch." },
     fishing        = { name = "Angeln", icon = "Trade_Fishing", secondary = true, ids = { 7620, 7731, 7732, 18248 },
         desc = "Entspannt Fische fangen, zum Kochen oder Verkaufen." },
+}
+
+-- Nutzen eines Herstellungsberufs für die Klasse selbst: 0 = kaum, 1 = wenig, 2 = gut, 3 = sehr gut
+-- (Rüstungsart, Waffen, Taschen, Munition, Tränke). Maßstab ist das Leveln bis 60.
+local function benefit(t3, t2, t1)
+    local b = {}
+    for _, k in ipairs(KG.CLASS_ORDER) do b[k] = 0 end
+    for _, k in ipairs(t1 or {}) do b[k] = 1 end
+    for _, k in ipairs(t2 or {}) do b[k] = 2 end
+    for _, k in ipairs(t3 or {}) do b[k] = 3 end
+    return b
+end
+
+KG.PROF_BENEFIT = {
+    blacksmithing  = benefit({ "WARRIOR", "PALADIN" }, { "SHAMAN", "ROGUE" }, { "HUNTER", "DRUID" }),
+    leatherworking = benefit({ "HUNTER", "ROGUE", "DRUID", "SHAMAN" }, nil, { "WARRIOR", "PALADIN" }),
+    tailoring      = benefit({ "MAGE", "WARLOCK", "PRIEST" }, nil, { "HUNTER", "ROGUE", "DRUID", "SHAMAN", "WARRIOR", "PALADIN" }),
+    alchemy        = benefit(nil, KG.CLASS_ORDER),
+    enchanting     = benefit(nil, KG.CLASS_ORDER),
+    engineering    = benefit({ "HUNTER" }, { "WARRIOR", "ROGUE", "MAGE" }, { "SHAMAN", "DRUID", "PRIEST", "WARLOCK", "PALADIN" }),
+}
+
+-- Warum ein Beruf einer Klasse nützt (gut) oder nicht nützt (kaum)
+KG.PROF_BENEFIT_NOTE = {
+    blacksmithing = {
+        good = "Waffen und Rüstung, die deine Klasse tragen kann",
+        WARRIOR = "Du schmiedest dir Waffen und Plattenrüstung selbst", PALADIN = "Du schmiedest dir Waffen und Plattenrüstung selbst",
+        SHAMAN = "Waffen, Schilde und später Kettenrüstung", ROGUE = "Dolche, Schwerter und Schleifsteine für dich",
+        none = "Platten- und Kettenrüstung und die meisten Waffen kann diese Klasse nicht nutzen",
+    },
+    leatherworking = {
+        good = "Leder- und Kettenrüstung für deine Klasse",
+        HUNTER = "Leder- und Kettenrüstung, dazu Köcher und Munitionstaschen", ROGUE = "Lederrüstung genau für deine Klasse",
+        DRUID = "Lederrüstung genau für deine Klasse", SHAMAN = "Leder- und Kettenrüstung für deine Klasse",
+        none = "Leder- und Kettenrüstung kann diese Klasse nicht tragen",
+    },
+    tailoring = { good = "Stoffrüstung und große Taschen für deine Klasse", none = "Stoffrüstung kann diese Klasse nicht tragen" },
+    alchemy = { good = "Heil- und Manatränke, später Elixiere" },
+    enchanting = { good = "Du verzauberst deine eigene Ausrüstung" },
+    engineering = { good = "Gadgets, Bomben und nützliche Ausrüstung", HUNTER = "Gewehre, Zielfernrohre und Bomben", none = "Die Geräte nützen dieser Klasse kaum" },
 }
 
 KG.PROF_QUIZ = {

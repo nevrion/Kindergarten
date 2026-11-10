@@ -981,7 +981,7 @@ pages.profs = {
                 SetProfIcon(c.i2, r.b)
                 c.name:SetText(KG.PROFS[r.a].name .. " + " .. KG.PROFS[r.b].name)
                 c.bar:Set(r.pct, C.mint[1], C.mint[2], C.mint[3])
-                c.fit:SetText(r.pct >= 85 and "passt sehr gut" or (r.pct >= 60 and "passt gut" or "geht auch"))
+                c.fit:SetText(r.pct >= 85 and "passt sehr gut" or (r.pct >= 60 and "passt gut" or (r.pct >= 35 and "geht auch" or "eher nicht")))
                 local good = {}
                 for j = 1, math.min(2, #r.good) do good[j] = "+ " .. r.good[j] end
                 c.good:SetText(table.concat(good, "\n"))

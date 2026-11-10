@@ -332,13 +332,37 @@ end
 ---------------------------------------------------------------------------
 
 local FEEDS = { mining = { "blacksmithing", "engineering" }, herbalism = { "alchemy" }, skinning = { "leatherworking" } }
+local SELF_PTS = { [0] = -5, [1] = 0, [2] = 2, [3] = 4 }
+local PARTNER_PTS = { [0] = 0, [1] = 0, [2] = 1.5, [3] = 3 }
+
+local function benefitNote(prof, class, kind)
+    local n = KG.PROF_BENEFIT_NOTE[prof] or {}
+    if kind == "good" then return n[class] or n.good end
+    return n.none
+end
+
+-- Nutzen einer Herstellung für eine Klasse (0 bis 3)
+function KG.ProfBenefit(prof, class)
+    local t = KG.PROF_BENEFIT[prof]
+    return t and class and t[class] or 0
+end
 
 -- Bewertet alle Paare von Hauptberufen für classKey; partner = Profil der Begleitung (oder nil)
 function KG.ScoreProfs(ans, classKey, partner)
     local pset = {}
     for _, k in ipairs(partner and partner.profs or {}) do pset[k] = true end
     local pname = partner and partner.name or "deine Begleitung"
+    local pclass = partner and partner.class
+    local cname = classKey and KG.ClassName(classKey) or "deine Klasse"
+    local help = ans.goal == "help"
     local order, out = KG.PROF_ORDER, {}
+
+    -- Nützlichkeit eines Herstellungsberufs: für dich und für die Begleitung
+    local function craftUse(x)
+        local self = KG.ProfBenefit(x, classKey)
+        local other = partner and KG.ProfBenefit(x, pclass) or 0
+        return self, other
+    end
 
     for i = 1, #order do
         for j = i + 1, #order do
@@ -360,12 +384,33 @@ function KG.ScoreProfs(ans, classKey, partner)
                     if ans.goal == "gold" then add(2) end
                     if ans.effort == "low" then add(x == "skinning" and 2 or 1) end
                 else
-                    if ans.style == "craft" then add(2) end
+                    local mine, theirs = craftUse(x)
+                    if ans.style == "craft" then add(1) end
+                    if ans.style == "gather" or ans.style == "none" then add(-1) end
                     if ans.effort == "low" then add(x == "engineering" and -2 or -1)
                     elseif ans.effort == "high" then add(1) end
-                    if classKey and p.fits and p.fits[classKey] then
-                        add(ans.goal == "gear" and 4 or 2, p.name .. " stellt Ausrüstung her, die deine Klasse gut gebrauchen kann")
+
+                    -- Was hast du selbst davon?
+                    local pts = SELF_PTS[mine]
+                    if mine >= 2 and ans.goal == "gear" then pts = pts * 1.5 end
+                    if mine == 0 and ans.goal == "gear" then pts = pts - 1 end
+                    add(pts)
+                    if mine >= 2 then
+                        add(0, p.name .. ": " .. (benefitNote(x, classKey, "good") or "nützlich für deine Klasse"))
+                    elseif mine == 0 then
+                        local why = benefitNote(x, classKey, "none")
+                        add(0, p.name .. " bringt dir als " .. cname .. " kaum etwas" .. (why and (": " .. why) or ""), true)
                     end
+
+                    -- Was hat die Begleitung davon?
+                    if partner and not pset[x] then
+                        local pp = PARTNER_PTS[theirs] * (help and 1.4 or 0.7)
+                        add(pp)
+                        if theirs >= 2 then
+                            add(0, pname .. " (" .. KG.ClassName(pclass) .. ") kann deine " .. p.name .. " gut gebrauchen: " .. (benefitNote(x, pclass, "good") or "nützlich"))
+                        end
+                    end
+
                     if p.needs and y ~= p.needs then
                         if pset[p.needs] then
                             add(3, pname .. " hat " .. KG.PROFS[p.needs].name .. " und kann dir das Material für " .. p.name .. " liefern")
@@ -381,12 +426,12 @@ function KG.ScoreProfs(ans, classKey, partner)
                     elseif p.gather then
                         for _, craft in ipairs(FEEDS[x] or {}) do
                             if pset[craft] then
-                                add(ans.goal == "help" and 6 or 4, "Du lieferst mit " .. p.name .. " das Material für " .. KG.PROFS[craft].name .. " von " .. pname)
+                                add(help and 6 or 4, "Du lieferst mit " .. p.name .. " das Material für " .. KG.PROFS[craft].name .. " von " .. pname)
                                 break
                             end
                         end
-                    elseif p.shared then
-                        add(ans.goal == "help" and 2 or 1, p.name .. ": " .. p.shared)
+                    elseif p.shared and KG.ProfBenefit(x, pclass) >= 1 then
+                        add(help and 2 or 1, p.name .. ": " .. p.shared)
                     end
                 end
             end
@@ -394,11 +439,24 @@ function KG.ScoreProfs(ans, classKey, partner)
             local pa, pb = KG.PROFS[a], KG.PROFS[b]
             if pa.needs == b or pb.needs == a then
                 local g, c = pa.gather and pa or pb, pa.gather and pb or pa
-                add(4, g.name .. " liefert dir das Material für " .. c.name)
-                if ans.style == "both" then add(2) end
+                local ckey = pa.gather and b or a
+                local mine, theirs = craftUse(ckey)
+                if mine >= 2 or theirs >= 2 then
+                    add(4, g.name .. " liefert dir das Material für " .. c.name)
+                    if ans.style == "both" then add(2) end
+                elseif mine == 1 or theirs == 1 then
+                    add(1, g.name .. " liefert das Material für " .. c.name)
+                else
+                    add(0, g.name .. " liefert zwar Material für " .. c.name .. ", aber damit stellst du nichts für dich her", true)
+                end
             elseif a == "tailoring" and b == "enchanting" then
-                add(3, "Schneiderei braucht keinen Sammelberuf, und was du nähst, kannst du entzaubern")
-                if ans.style == "craft" then add(1) end
+                local mine = KG.ProfBenefit("tailoring", classKey)
+                if mine >= 2 then
+                    add(3, "Schneiderei braucht keinen Sammelberuf, und was du nähst, kannst du entzaubern")
+                    if ans.style == "craft" then add(1) end
+                else
+                    add(1, "Schneiderei braucht keinen Sammelberuf, und was du nähst, kannst du entzaubern")
+                end
             elseif pa.gather and pb.gather then
                 add(0, "Zwei Sammelberufe: kaum Aufwand, und das Material lässt sich gut verkaufen")
                 if a == "herbalism" and b == "mining" then
@@ -413,9 +471,8 @@ function KG.ScoreProfs(ans, classKey, partner)
     end
 
     table.sort(out, function(x, y) return x.score > y.score end)
-    local top, low = out[1].score, out[#out].score
     for _, r in ipairs(out) do
-        r.pct = math.floor(25 + 75 * (r.score - low) / math.max(1, top - low) + 0.5)
+        r.pct = math.max(3, math.min(100, math.floor(40 + 4.5 * r.score + 0.5)))
     end
     return out
 end
