@@ -1006,6 +1006,259 @@ pages.profs = {
 }
 
 ---------------------------------------------------------------------------
+-- Seite: Skillung (Eltern planen, Kind bekommt den nächsten Punkt angezeigt)
+---------------------------------------------------------------------------
+
+local TREE_H = 380
+
+local function TalentView(parent)
+    local v = CreateFrame("Frame", nil, parent)
+    v:SetSize(BODY_W, TREE_H)
+    v.heads, v.btns = {}, {}
+
+    local function button(tab, i)
+        v.btns[tab] = v.btns[tab] or {}
+        local b = v.btns[tab][i]
+        if b then return b end
+        b = CreateFrame("Button", nil, v, "BackdropTemplate")
+        Flat(b, C.field)
+        b.icon = b:CreateTexture(nil, "ARTWORK")
+        b.icon:SetPoint("TOPLEFT", 2, -2)
+        b.icon:SetPoint("BOTTOMRIGHT", -2, 2)
+        b.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        b.rank = Text(b, 9, C.text, "OUTLINE")
+        b.rank:SetPoint("BOTTOMRIGHT", -1, 2)
+        b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        b.tab, b.idx = tab, i
+        Reg(b, "btn")
+        Tooltip(b, function(self)
+            if self.live and GameTooltip.SetTalent then GameTooltip:SetTalent(self.tab, self.idx)
+            else GameTooltip:SetText(self.tal.name, 1, 1, 1) end
+            GameTooltip:AddLine(("Im Plan: %d von %d"):format(self.plan, self.tal.max), C.sun[1], C.sun[2], C.sun[3])
+            if self.kid then GameTooltip:AddLine("Gelernt: " .. self.cur, C.mint[1], C.mint[2], C.mint[3]) end
+        end)
+        v.btns[tab][i] = b
+        return b
+    end
+
+    -- st: planned, nextPick, kid, live, onClick(tab, idx, mouseButton, talent)
+    function v:Render(tree, st)
+        local ntab = #tree.tabs
+        local colW = (BODY_W - (ntab - 1) * 12) / ntab
+        local maxTier, maxCol = 1, 1
+        for _, t in ipairs(tree.tabs) do
+            for _, tal in ipairs(t.talents) do
+                maxTier, maxCol = math.max(maxTier, tal.tier), math.max(maxCol, tal.col)
+            end
+        end
+        local cell = math.max(20, math.min(42, math.floor((TREE_H - 24) / maxTier), math.floor(colW / maxCol)))
+        for tab = 1, math.max(ntab, #self.heads) do
+            local t = tree.tabs[tab]
+            local head = self.heads[tab]
+            if t and not head then
+                head = Text(self, 12, C.sun)
+                self.heads[tab] = head
+            end
+            local x0 = (tab - 1) * (colW + 12)
+            local spent = 0
+            for i, tal in ipairs(t and t.talents or {}) do
+                local b = button(tab, i)
+                b:SetSize(cell - 4, cell - 4)
+                b:ClearAllPoints()
+                b:SetPoint("TOPLEFT", x0 + (colW - maxCol * cell) / 2 + (tal.col - 1) * cell + 2, -(22 + (tal.tier - 1) * cell))
+                b.icon:SetTexture(tal.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+                local plan = st.planned[tab * 100 + i] or 0
+                local cur = (st.kid and st.live) and KG.TalentRank(tab, i) or 0
+                local isNext = st.nextPick and st.nextPick.tab == tab and st.nextPick.idx == i
+                spent = spent + plan
+                if st.kid then b.rank:SetText(plan > 0 and (cur .. "/" .. plan) or (cur > 0 and tostring(cur) or ""))
+                else b.rank:SetText(plan > 0 and (plan .. "/" .. tal.max) or "") end
+                b.rank:SetTextColor(unpack((st.kid and plan > 0 and cur >= plan) and C.mint or C.text))
+                b:SetBackdropBorderColor(unpack(isNext and C.mint or (plan > 0 and C.sun or C.edge)))
+                local idle = plan == 0 and cur == 0
+                b.icon:SetDesaturated(idle)
+                b.icon:SetAlpha(idle and 0.45 or 1)
+                b.tal, b.plan, b.cur, b.live, b.kid = tal, plan, cur, st.live, st.kid
+                if st.onClick then b:SetScript("OnClick", function(_, btn) st.onClick(tab, i, btn, tal) end)
+                else b:SetScript("OnClick", nil) end
+                b:Show()
+            end
+            for i, b in ipairs(self.btns[tab] or {}) do
+                if not t or i > #t.talents then b:Hide() end
+            end
+            if head then
+                head:SetShown(t ~= nil)
+                if t then
+                    head:ClearAllPoints()
+                    head:SetPoint("TOPLEFT", x0, 0)
+                    head:SetWidth(colW)
+                    head:SetText(t.name .. "  " .. Colored(spent .. (spent == 1 and " Punkt" or " Punkte"), C.dim))
+                end
+            end
+        end
+    end
+    return v
+end
+
+local function TalentClass()
+    if IsParent() then return KG.db.partner and KG.db.partner.class end
+    return KG.MyClass()
+end
+
+pages.talents = {
+    title = function() return IsParent() and "Skillung planen" or "Meine Skillung" end,
+    sub = function()
+        return IsParent() and "Klicke die Talente in der Reihenfolge an, in der dein Kind sie lernen soll. Dann schickst du die Skillung rüber."
+            or "Deine Begleitung gibt dir vor, welche Talente du lernst. Hier siehst du immer den nächsten Punkt."
+    end,
+    build = function(p)
+        p.emptyKid = EmptyState(p, "Trage zuerst ein, welche Klasse dein Kind spielt. Danach kannst du hier die Skillung planen.", "Mein Kind eintragen", function() ShowPage("partner") end)
+        p.noTree = EmptyState(p, "", "", function()
+            if IsParent() then KG.RequestTree() else KG.TalentDump() end
+        end)
+        p.noTree:SetSize(BODY_W, 190)
+
+        p.main = CreateFrame("Frame", nil, p)
+        p.main:SetAllPoints()
+        local ban = Card(p.main, false)
+        ban:SetSize(BODY_W, 62)
+        ban:SetPoint("TOPLEFT", 0, 0)
+        p.msg = Text(ban, 12, C.text)
+        p.msg:SetPoint("TOPLEFT", 14, -10)
+        p.msg:SetWidth(BODY_W - 300)
+        p.act2 = Btn(ban, "Leeren", 80, 28, "ghost", function()
+            if not p.cls then return end
+            KG.db.builds[p.cls] = nil
+            KG.RefreshUI()
+        end)
+        p.act2:SetPoint("RIGHT", -12, 0)
+        p.act1 = Btn(ban, "", 170, 28, "primary", function()
+            if not p.cls then return end
+            if IsParent() then
+                local picks = KG.ParsePicks((KG.db.builds[p.cls] or {}).picks or "")
+                table.remove(picks)
+                if #picks > 0 then KG.SetBuild(p.cls, picks) else KG.db.builds[p.cls] = nil end
+                KG.RefreshUI()
+            elseif p.nextPick and LearnTalent then
+                pcall(LearnTalent, p.nextPick.tab, p.nextPick.idx)
+                if C_Timer and C_Timer.After then C_Timer.After(0.6, function() KG.RefreshUI() end) else KG.RefreshUI() end
+            end
+        end)
+        p.act1:SetPoint("RIGHT", p.act2, "LEFT", -8, 0)
+
+        p.view = TalentView(p.main)
+        p.view:SetPoint("TOPLEFT", 0, -74)
+
+        p.b1 = Btn(p.main, "", 210, 30, "primary", function()
+            if IsParent() then KG.SendBuild(p.cls) else KG.RequestBuild() end
+        end)
+        p.b1:SetPoint("BOTTOMLEFT", 0, 0)
+        p.code = Edit(p.main, BODY_W - 210 - 170 - 16)
+        p.code:SetPoint("LEFT", p.b1, "RIGHT", 8, 0)
+        p.code:SetMaxLetters(0)
+        p.b2 = Btn(p.main, "", 170, 30, "ghost", function()
+            if IsParent() then
+                p.code:SetText(KG.EncodeBuild(p.cls) or "")
+                p.code:SetFocus()
+                p.code:HighlightText()
+                p.info:SetText("Markiert: Strg+C kopiert den Code. Dein Kind fügt ihn auf seiner Skillungs-Seite ein.")
+            else
+                local class, build = KG.DecodeBuild(p.code:GetText())
+                if not class then p.info:SetText(Colored(build, C.pink)) return end
+                KG.db.builds[class] = build
+                p.code:SetText("")
+                KG.RefreshUI()
+                if class ~= KG.MyClass() then
+                    p.info:SetText(Colored("Diese Skillung ist für " .. KG.ClassName(class) .. ", dein Charakter ist " .. KG.ClassName(KG.MyClass()) .. ". Sie wird angezeigt, sobald du diese Klasse spielst.", C.pink))
+                end
+            end
+        end)
+        p.b2:SetPoint("LEFT", p.code, "RIGHT", 8, 0)
+        p.info = Text(p.main, 10, C.dim)
+        p.info:SetPoint("BOTTOMLEFT", 0, 36)
+        p.info:SetWidth(BODY_W)
+    end,
+    refresh = function(p)
+        local db, parent = KG.db, IsParent()
+        local cls = TalentClass()
+        p.cls = cls
+        p.emptyKid:Hide()
+        p.noTree:Hide()
+        p.main:Hide()
+        if not cls then p.emptyKid:Show() return end
+
+        local tree, live = KG.TreeFor(cls)
+        if not tree then
+            if parent then
+                p.noTree.text:SetText(("Die Talentbäume für %s liegen hier noch nicht vor. Seid ihr in einer Gruppe und hat %s das Addon, schickt es dir die Bäume auf Knopfdruck. Alternativ öffnest du diese Seite auf einem eigenen Charakter derselben Klasse."):format(KG.ClassName(cls), db.partner.name))
+                p.noTree.btn:SetLabel("Talentbäume anfragen")
+            else
+                p.noTree.text:SetText("Die Talentbäume konnten nicht aus dem Spiel gelesen werden. Starte die Diagnose und gib die Datei an deine Begleitung weiter. Der Pfad steht danach im Chat.")
+                p.noTree.btn:SetLabel("Diagnose starten")
+            end
+            p.noTree:Show()
+            return
+        end
+        p.main:Show()
+
+        local build = db.builds[cls]
+        local picks = KG.ParsePicks(build and build.picks or "")
+        local planned, nextPick = KG.BuildProgress(picks, (not parent and live) and KG.TalentRank or nil)
+        p.nextPick = nextPick
+        p.info:SetText("")
+
+        if parent then
+            local last = picks[#picks]
+            local lastTal = last and tree.tabs[last.tab] and tree.tabs[last.tab].talents[last.idx]
+            p.msg:SetText(("Skillung für %s (%s): %d Punkte verplant.%s\nLinksklick setzt einen Punkt, Rechtsklick nimmt ihn zurück."):format(
+                db.partner.name, ClassText(cls), #picks, lastTal and (" Zuletzt: " .. lastTal.name .. ".") or ""))
+            p.act1:SetLabel("Letzten Punkt zurück")
+            p.act1:SetShown(#picks > 0)
+            p.act2:SetShown(#picks > 0)
+            p.b1:SetLabel("An mein Kind senden")
+            p.b2:SetLabel("Code zeigen")
+        else
+            local free = KG.UnspentPoints()
+            local tal = nextPick and tree.tabs[nextPick.tab] and tree.tabs[nextPick.tab].talents[nextPick.idx]
+            if not build then
+                p.msg:SetText("Noch keine Skillung erhalten. Bitte deine Begleitung, sie dir zu schicken, oder frage sie unten an.")
+            elseif tal then
+                p.msg:SetText((free > 0 and ("Du hast " .. Colored(free .. (free == 1 and " freien Punkt" or " freie Punkte"), C.mint) .. ". ") or "")
+                    .. "Nächster Punkt: " .. Colored(tal.name, C.sun) .. " im Baum " .. tree.tabs[nextPick.tab].name
+                    .. ".\nSkillung von " .. (build.author or "?") .. (build.time ~= "" and (", " .. build.time) or "") .. ". Das grün umrandete Talent ist als nächstes dran.")
+            elseif nextPick then
+                p.msg:SetText(Colored("Die Skillung passt nicht mehr zu deinen Talentbäumen, zum Beispiel nach einem Patch.", C.pink) .. "\nBitte deine Begleitung um eine neue Skillung.")
+            else
+                p.msg:SetText("Alle geplanten Punkte sind gesetzt. Gut gemacht!\nSkillung von " .. (build.author or "?") .. ".")
+            end
+            p.act1:SetLabel("Diesen Punkt lernen")
+            p.act1:SetShown(tal ~= nil and free > 0 and live and LearnTalent ~= nil)
+            p.act2:Hide()
+            p.b1:SetLabel("Skillung anfragen")
+            p.b2:SetLabel("Code übernehmen")
+        end
+
+        p.view:Render(tree, {
+            planned = planned, nextPick = nextPick, kid = not parent, live = live,
+            onClick = parent and function(tab, idx, btn, tal)
+                local list = KG.ParsePicks((db.builds[cls] or {}).picks or "")
+                if btn == "RightButton" then
+                    for n = #list, 1, -1 do
+                        if list[n].tab == tab and list[n].idx == idx then table.remove(list, n) break end
+                    end
+                else
+                    local c = 0
+                    for _, q in ipairs(list) do if q.tab == tab and q.idx == idx then c = c + 1 end end
+                    if c < tal.max and #list < 200 then list[#list + 1] = { tab = tab, idx = idx } end
+                end
+                if #list > 0 then KG.SetBuild(cls, list) else db.builds[cls] = nil end
+                KG.RefreshUI()
+            end or nil,
+        })
+    end,
+}
+
+---------------------------------------------------------------------------
 -- Seite: Mein Plan / So hilfst du
 ---------------------------------------------------------------------------
 
@@ -1057,6 +1310,7 @@ pages.plan = {
             row:SetSize(BODY_W, 28)
             row:SetPoint("TOPLEFT", 0, -132 - (i - 1) * 30)
             row.check = Check(row, function(self, v)
+                if not row.key then return end
                 KG.db.todo[row.key] = v or nil
                 row.text:SetTextColor(unpack(v and C.dim or C.text))
             end)
@@ -1168,6 +1422,7 @@ local STEPS = {
     { key = "quiz", kid = "Mein Spielstil" },
     { key = "class", kid = "Meine Klasse", parent = "Passende Klasse" },
     { key = "profs", kid = "Meine Berufe", parent = "Passende Berufe" },
+    { key = "talents", kid = "Meine Skillung", parent = "Skillung planen" },
     { key = "plan", kid = "Mein Plan", parent = "So hilfst du" },
 }
 
@@ -1178,6 +1433,10 @@ local function StepDone(key)
     if key == "quiz" then return KG.QuizDone(KG.QUIZ, db.quiz) end
     if key == "class" then return db.chosenClass ~= nil end
     if key == "profs" then return db.chosenProfs ~= nil end
+    if key == "talents" then
+        local cls = TalentClass()
+        return cls ~= nil and db.builds[cls] ~= nil
+    end
     return false
 end
 
@@ -1370,4 +1629,39 @@ function KG.ToggleUI()
         else start = "plan" end
     end
     ShowPage(start)
+end
+
+function KG.OpenPage(key)
+    if not KG.db then return end
+    if not ui then CreateMain() end
+    KG.db.seen = true
+    ui:Show()
+    ShowPage(key)
+end
+
+-- Kleine Einblendung oben am Bildschirm, Klick öffnet die Skillungs-Seite
+local toast
+local toastStamp = 0
+function KG.ShowToast(text)
+    if not toast then
+        toast = CreateFrame("Button", "KindergartenToast", UIParent, "BackdropTemplate")
+        Flat(toast, C.bg, C.sun)
+        toast:SetSize(460, 58)
+        toast:SetPoint("TOP", 0, -140)
+        toast:SetFrameStrata("HIGH")
+        toast.text = Text(toast, 12, C.text)
+        toast.text:SetPoint("TOPLEFT", 14, -10)
+        toast.text:SetWidth(432)
+        toast:SetScript("OnClick", function(self)
+            self:Hide()
+            KG.OpenPage("talents")
+        end)
+    end
+    toast.text:SetText(Colored("Kindergarten: ", C.sun) .. text .. " Klicke hier oder öffne /kg.")
+    toast:Show()
+    toastStamp = toastStamp + 1
+    local stamp = toastStamp
+    if C_Timer and C_Timer.After then
+        C_Timer.After(25, function() if toastStamp == stamp then toast:Hide() end end)
+    end
 end

@@ -155,11 +155,15 @@ local function rawSend(msg, channel, target)
     return true
 end
 
+KG.RawSend = rawSend
+
 local function groupChannel()
     if IsInRaid and IsInRaid() then return "RAID" end
     if IsInGroup and IsInGroup() then return "PARTY" end
     if GetNumPartyMembers and GetNumPartyMembers() > 0 then return "PARTY" end
 end
+
+KG.GroupChannel = groupChannel
 
 function KG.SendToGroup(silent)
     local ch = groupChannel()
@@ -200,6 +204,11 @@ local function onAddonMessage(prefix, text, channel, sender)
     if prefix ~= PREFIX or not KG.db then return end
     local short = sender and (Ambiguate and Ambiguate(sender, "short") or sender:match("^[^-]+")) or ""
     if short == KG.MyName() then return end
+    local kind = text:match("^" .. VERSION .. "|(%a+)")
+    if kind == "T" or kind == "TQ" or kind == "B" or kind == "BQ" then
+        if KG.OnTalentMessage then KG.OnTalentMessage(kind, text, channel, sender, short) end
+        return
+    end
     if text == VERSION .. "|Q" then
         if channel == "WHISPER" then rawSend(KG.Encode(KG.BuildProfile()), "WHISPER", sender)
         else KG.SendToGroup(true) end
@@ -434,6 +443,8 @@ f:RegisterEvent("ADDON_LOADED")
 f:RegisterEvent("PLAYER_LOGIN")
 f:RegisterEvent("CHAT_MSG_ADDON")
 f:RegisterEvent("GROUP_ROSTER_UPDATE")
+f:RegisterEvent("PLAYER_LEVEL_UP")
+pcall(f.RegisterEvent, f, "CHARACTER_POINTS_CHANGED")
 f:SetScript("OnEvent", function(_, event, a1, a2, a3, a4)
     if event == "ADDON_LOADED" then
         if a1 ~= ADDON then return end
@@ -442,6 +453,8 @@ f:SetScript("OnEvent", function(_, event, a1, a2, a3, a4)
         db.quiz = db.quiz or {}
         db.profQuiz = db.profQuiz or {}
         db.todo = db.todo or {}
+        db.trees = db.trees or {}
+        db.builds = db.builds or {}
         db.scale = db.scale or 1
         KG.db = db
         if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then C_ChatInfo.RegisterAddonMessagePrefix(PREFIX)
@@ -455,6 +468,11 @@ f:SetScript("OnEvent", function(_, event, a1, a2, a3, a4)
         end
     elseif event == "CHAT_MSG_ADDON" then
         onAddonMessage(a1, a2, a3, a4)
+    elseif event == "PLAYER_LEVEL_UP" or event == "CHARACTER_POINTS_CHANGED" then
+        if KG.db and KG.TalentPointsChanged then
+            if C_Timer and C_Timer.After then C_Timer.After(1.5, function() KG.TalentPointsChanged() end)
+            else KG.TalentPointsChanged() end
+        end
     elseif event == "GROUP_ROSTER_UPDATE" then
         if KG.db and KG.db.role and GetTime and GetTime() - lastAuto > 15 and groupChannel() then
             lastAuto = GetTime()
@@ -465,6 +483,11 @@ end)
 
 SLASH_KINDERGARTEN1 = "/kg"
 SLASH_KINDERGARTEN2 = "/kindergarten"
-SlashCmdList["KINDERGARTEN"] = function()
+SlashCmdList["KINDERGARTEN"] = function(msg)
+    msg = strlower(strtrim(msg or ""))
+    if msg == "talente" and KG.TalentDump then KG.TalentDump() return end
     if KG.ToggleUI then KG.ToggleUI() end
 end
+
+BINDING_HEADER_KINDERGARTEN = "Kindergarten"
+BINDING_NAME_KINDERGARTEN_TOGGLE = "Kindergarten öffnen oder schließen"
