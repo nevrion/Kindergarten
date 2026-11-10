@@ -16,6 +16,14 @@ local ui, current
 local pages = {}
 local ShowPage
 
+-- Alles Anklickbare meldet sich hier an, damit die Controller-Navigation es findet
+local focusables = {}
+local function Reg(w, kind)
+    w.kgKind = kind
+    focusables[#focusables + 1] = w
+    return w
+end
+
 ---------------------------------------------------------------------------
 -- Bausteine
 ---------------------------------------------------------------------------
@@ -55,6 +63,7 @@ local function Card(parent, clickable)
     if clickable then
         c:SetScript("OnEnter", function(self) self.hover = true; self:Paint() end)
         c:SetScript("OnLeave", function(self) self.hover = false; self:Paint() end)
+        Reg(c, "btn")
     end
     return c
 end
@@ -75,7 +84,7 @@ local function Btn(parent, text, w, h, kind, onClick)
     b:SetScript("OnDisable", function(self) self:SetAlpha(0.4) end)
     b:SetScript("OnEnable", function(self) self:SetAlpha(1) end)
     if onClick then b:SetScript("OnClick", onClick) end
-    return b
+    return Reg(b, "btn")
 end
 
 local function Edit(parent, w)
@@ -90,7 +99,7 @@ local function Edit(parent, w)
     e:SetScript("OnEnterPressed", e.ClearFocus)
     e:SetScript("OnEditFocusGained", function(self) self:SetBackdropBorderColor(unpack(C.sun)) end)
     e:SetScript("OnEditFocusLost", function(self) self:SetBackdropBorderColor(unpack(C.edge)) end)
-    return e
+    return Reg(e, "edit")
 end
 
 local function Icon(parent, size, name)
@@ -146,7 +155,7 @@ local function Check(parent, onClick)
     t:SetPoint("TOPLEFT", 4, -4)
     t:SetPoint("BOTTOMRIGHT", -4, 4)
     c:SetScript("OnClick", function(self) onClick(self, self:GetChecked() and true or false) end)
-    return c
+    return Reg(c, "btn")
 end
 
 local function Tooltip(frame, fn)
@@ -189,6 +198,129 @@ local function EmptyState(parent, text, btnText, onClick)
 end
 
 ---------------------------------------------------------------------------
+-- Controller-Navigation (eingebautes Gamepad-System)
+-- Steuerkreuz: nächstes Feld in der Richtung, A: bestätigen, B: schließen, LB/RB: Schritt wechseln
+---------------------------------------------------------------------------
+
+local Nav = { active = false }
+
+local function navList()
+    local t = {}
+    for _, w in ipairs(focusables) do
+        if w:IsVisible() and (w.kgKind == "edit" or (w:IsEnabled() and w:GetScript("OnClick"))) then
+            local x, y = w:GetCenter()
+            if x and y then t[#t + 1] = { w = w, x = x, y = y } end
+        end
+    end
+    return t
+end
+
+function Nav.Set(w)
+    Nav.focus = w
+    if not Nav.ring then
+        Nav.ring = CreateFrame("Frame", nil, ui, "BackdropTemplate")
+        Nav.ring:SetBackdrop({ edgeFile = FLAT, edgeSize = 2 })
+        Nav.ring:SetBackdropBorderColor(C.sun[1], C.sun[2], C.sun[3], 1)
+    end
+    if not w then Nav.ring:Hide() return end
+    Nav.ring:SetParent(w)
+    Nav.ring:ClearAllPoints()
+    Nav.ring:SetPoint("TOPLEFT", w, "TOPLEFT", -3, 3)
+    Nav.ring:SetPoint("BOTTOMRIGHT", w, "BOTTOMRIGHT", 3, -3)
+    Nav.ring:SetFrameLevel((w:GetFrameLevel() or 1) + 10)
+    Nav.ring:Show()
+end
+
+-- Startfeld: oberstes, dann linkestes Feld im Inhaltsbereich
+function Nav.Default(list)
+    local best
+    for _, c in ipairs(list) do
+        if not c.w.kgSide and not c.w.kgNoDefault then
+            if not best or c.y > best.y + 2 or (math.abs(c.y - best.y) <= 2 and c.x < best.x) then best = c end
+        end
+    end
+    return best and best.w or (list[1] and list[1].w)
+end
+
+function Nav.Fix()
+    if not Nav.active then return end
+    local f = Nav.focus
+    if f and f:IsVisible() and (f.kgKind == "edit" or f:IsEnabled()) then return end
+    Nav.Set(Nav.Default(navList()))
+end
+
+function Nav.Move(dx, dy)
+    local list = navList()
+    if #list == 0 then return end
+    local cur, cx, cy = Nav.focus, nil, nil
+    if cur and cur:IsVisible() then cx, cy = cur:GetCenter() end
+    if not cx then Nav.Set(Nav.Default(list)) return end
+    local best, bestScore
+    for _, c in ipairs(list) do
+        if c.w ~= cur then
+            local ax, ay = c.x - cx, c.y - cy
+            local along = ax * dx + ay * dy
+            local across = math.abs(ax * dy) + math.abs(ay * dx)
+            if along > 4 then
+                local score = along + across * 2.5
+                if not bestScore or score < bestScore then best, bestScore = c.w, score end
+            end
+        end
+    end
+    if best then Nav.Set(best) end
+end
+
+function Nav.Step(dir)
+    local list, idx = {}, 1
+    for _, b in ipairs(ui.steps) do
+        if b:IsShown() and b:IsEnabled() then
+            list[#list + 1] = b
+            if b.step.key == current then idx = #list end
+        end
+    end
+    local b = list[idx + dir]
+    if b then
+        Nav.focus = nil
+        ShowPage(b.step.key)
+    end
+end
+
+local NAV_BUTTONS = {
+    PADDUP = function() Nav.Move(0, 1) end,
+    PADDDOWN = function() Nav.Move(0, -1) end,
+    PADDLEFT = function() Nav.Move(-1, 0) end,
+    PADDRIGHT = function() Nav.Move(1, 0) end,
+    PADLSHOULDER = function() Nav.Step(-1) end,
+    PADRSHOULDER = function() Nav.Step(1) end,
+    PAD1 = function()
+        local w = Nav.focus
+        if not w or not w:IsVisible() then Nav.Fix() return end
+        if w.kgKind == "edit" then w:SetFocus()
+        elseif w:IsEnabled() then w:Click() end
+        Nav.Fix()
+    end,
+    PAD2 = function()
+        local w = Nav.focus
+        if w and w.kgKind == "edit" and w:HasFocus() then w:ClearFocus() else ui:Hide() end
+    end,
+}
+
+-- Liefert true, wenn die Taste von der Navigation verbraucht wurde
+function Nav.Handle(button)
+    local fn = NAV_BUTTONS[button]
+    if not fn then return false end
+    if not Nav.active then
+        Nav.active = true
+        ui.padHint:Show()
+        Nav.Fix()
+        if button ~= "PAD2" then return true end
+    end
+    fn()
+    return true
+end
+KG.NavHandle = Nav.Handle
+
+---------------------------------------------------------------------------
 -- Fragebogen (für Spielstil und Berufe)
 ---------------------------------------------------------------------------
 
@@ -222,6 +354,7 @@ local function QuizView(parent, quiz, getAnswers, onDone)
             if v.idx < #quiz then
                 v.idx = v.idx + 1
                 v:Render()
+                if Nav.active then Nav.Set(v.cards[1]) end
             else
                 onDone()
             end
@@ -1090,6 +1223,7 @@ function ShowPage(key)
     def.refresh(def.frame)
     RefreshSidebar()
     if UIFrameFadeIn then UIFrameFadeIn(def.frame, 0.2, 0, 1) end
+    Nav.Fix()
 end
 
 function KG.RefreshUI()
@@ -1148,6 +1282,7 @@ local function CreateMain()
         b.label = Text(b, 13, C.text)
         b.label:SetPoint("LEFT", 42, 0)
         b.label:SetJustifyV("MIDDLE")
+        b.kgSide = true
         b:SetScript("OnClick", function(self) ShowPage(self.step.key) end)
         b:SetScript("OnDisable", function(self) self:SetAlpha(0.35) end)
         b:SetScript("OnEnable", function(self) self:SetAlpha(1) end)
@@ -1155,6 +1290,11 @@ local function CreateMain()
     end
     f.role = Text(side, 10, C.dim)
     f.role:SetPoint("BOTTOMLEFT", 16, 14)
+    f.padHint = Text(side, 10, C.sun)
+    f.padHint:SetPoint("BOTTOMLEFT", 16, 34)
+    f.padHint:SetWidth(SIDE - 32)
+    f.padHint:SetText("Controller: Steuerkreuz wählt aus, A bestätigt, B schließt, LB und RB wechseln den Schritt.")
+    f.padHint:Hide()
 
     -- Kopf und Inhalt
     f.title = Text(f, 22, C.sun)
@@ -1164,6 +1304,18 @@ local function CreateMain()
     f.sub:SetWidth(BODY_W - 40)
     local close = Btn(f, "X", 28, 28, "ghost", function() f:Hide() end)
     close:SetPoint("TOPRIGHT", -14, -14)
+    close.kgNoDefault = true
+
+    -- Eingebautes Gamepad-System: verbrauchte Tasten nicht an die Spielbelegung weiterreichen
+    if f.EnableGamePadButton then
+        f:EnableGamePadButton(true)
+        f:SetScript("OnGamePadButtonDown", function(self, button)
+            local used = Nav.Handle(button)
+            if self.SetPropagateKeyboardInput and not (InCombatLockdown and InCombatLockdown()) then
+                self:SetPropagateKeyboardInput(not used)
+            end
+        end)
+    end
 
     f.body = CreateFrame("Frame", nil, f)
     f.body:SetPoint("TOPLEFT", SIDE + 26, -96)

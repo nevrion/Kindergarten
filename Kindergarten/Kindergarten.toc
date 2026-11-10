@@ -2,7 +2,7 @@
 ## Title: |cffffcc5cKindergarten|r
 ## Notes: Hilft Einsteigern beim Start: Spielstil-Fragen, Klassen- und Berufe-Empfehlung, abgestimmt auf die Begleitung. Befehl: /kg
 ## Author: nevrion
-## Version: 0.1.0
+## Version: 0.2.0
 ## SavedVariables: KindergartenDB
 
 Data.lua
