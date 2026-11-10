@@ -205,7 +205,7 @@ local function onAddonMessage(prefix, text, channel, sender)
     local short = sender and (Ambiguate and Ambiguate(sender, "short") or sender:match("^[^-]+")) or ""
     if short == KG.MyName() then return end
     local kind = text:match("^" .. VERSION .. "|(%a+)")
-    if kind == "T" or kind == "TQ" or kind == "B" or kind == "BQ" then
+    if kind == "B" or kind == "BQ" then
         if KG.OnTalentMessage then KG.OnTalentMessage(kind, text, channel, sender, short) end
         return
     end

@@ -1029,29 +1029,37 @@ local function TalentView(parent)
         b.rank = Text(b, 9, C.text, "OUTLINE")
         b.rank:SetPoint("BOTTOMRIGHT", -1, 2)
         b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
-        b.tab, b.idx = tab, i
         Reg(b, "btn")
         Tooltip(b, function(self)
-            if self.live and GameTooltip.SetTalent then GameTooltip:SetTalent(self.tab, self.idx)
-            else GameTooltip:SetText(self.tal.name, 1, 1, 1) end
-            GameTooltip:AddLine(("Im Plan: %d von %d"):format(self.plan, self.tal.max), C.sun[1], C.sun[2], C.sun[3])
+            local tal = self.tal
+            if tal.spells then
+                GameTooltip:SetSpellByID(tal.spells[math.max(1, math.min(self.plan > 0 and self.plan or self.cur, tal.max))])
+            elseif self.liveTab and GameTooltip.SetTalent then
+                GameTooltip:SetTalent(self.liveTab, self.liveIdx)
+            else
+                GameTooltip:SetText(KG.TalentName(tal), 1, 1, 1)
+            end
+            GameTooltip:AddLine(" ")
+            GameTooltip:AddLine(("Im Plan: %d von %d"):format(self.plan, tal.max), C.sun[1], C.sun[2], C.sun[3])
             if self.kid then GameTooltip:AddLine("Gelernt: " .. self.cur, C.mint[1], C.mint[2], C.mint[3]) end
+            if tal.tier > 0 then GameTooltip:AddLine(("Ab %d Punkten in diesem Baum"):format(tal.tier * 5), C.dim[1], C.dim[2], C.dim[3]) end
+            if self.preName then GameTooltip:AddLine("Braucht: " .. self.preName .. " (voll)", C.dim[1], C.dim[2], C.dim[3]) end
         end)
         v.btns[tab][i] = b
         return b
     end
 
-    -- st: planned, nextPick, kid, live, onClick(tab, idx, mouseButton, talent)
+    -- st: planned, nextPick, kid, rankFn, canAdd(tab, tal), onClick(tab, tal, mouseButton), tree
     function v:Render(tree, st)
         local ntab = #tree.tabs
         local colW = (BODY_W - (ntab - 1) * 12) / ntab
-        local maxTier, maxCol = 1, 1
+        local rows, cols = 1, 1
         for _, t in ipairs(tree.tabs) do
             for _, tal in ipairs(t.talents) do
-                maxTier, maxCol = math.max(maxTier, tal.tier), math.max(maxCol, tal.col)
+                rows, cols = math.max(rows, tal.tier + 1), math.max(cols, tal.col + 1)
             end
         end
-        local cell = math.max(20, math.min(42, math.floor((TREE_H - 24) / maxTier), math.floor(colW / maxCol)))
+        local cell = math.max(20, math.min(46, math.floor((TREE_H - 24) / rows), math.floor(colW / cols)))
         for tab = 1, math.max(ntab, #self.heads) do
             local t = tree.tabs[tab]
             local head = self.heads[tab]
@@ -1065,21 +1073,25 @@ local function TalentView(parent)
                 local b = button(tab, i)
                 b:SetSize(cell - 4, cell - 4)
                 b:ClearAllPoints()
-                b:SetPoint("TOPLEFT", x0 + (colW - maxCol * cell) / 2 + (tal.col - 1) * cell + 2, -(22 + (tal.tier - 1) * cell))
-                b.icon:SetTexture(tal.icon or "Interface\\Icons\\INV_Misc_QuestionMark")
-                local plan = st.planned[tab * 100 + i] or 0
-                local cur = (st.kid and st.live) and KG.TalentRank(tab, i) or 0
-                local isNext = st.nextPick and st.nextPick.tab == tab and st.nextPick.idx == i
+                b:SetPoint("TOPLEFT", x0 + (colW - cols * cell) / 2 + tal.col * cell + 2, -(22 + tal.tier * cell))
+                b.icon:SetTexture(KG.TalentIcon(tal))
+                local plan = st.planned[tab * 100 + tal.key] or 0
+                local cur = (st.kid and st.rankFn) and st.rankFn(tab, tal.key) or 0
+                local isNext = st.nextPick and st.nextPick.tab == tab and st.nextPick.key == tal.key
                 spent = spent + plan
                 if st.kid then b.rank:SetText(plan > 0 and (cur .. "/" .. plan) or (cur > 0 and tostring(cur) or ""))
                 else b.rank:SetText(plan > 0 and (plan .. "/" .. tal.max) or "") end
                 b.rank:SetTextColor(unpack((st.kid and plan > 0 and cur >= plan) and C.mint or C.text))
                 b:SetBackdropBorderColor(unpack(isNext and C.mint or (plan > 0 and C.sun or C.edge)))
+                local locked = (not st.kid) and plan < tal.max and st.canAdd and not st.canAdd(tab, tal)
                 local idle = plan == 0 and cur == 0
                 b.icon:SetDesaturated(idle)
-                b.icon:SetAlpha(idle and 0.45 or 1)
-                b.tal, b.plan, b.cur, b.live, b.kid = tal, plan, cur, st.live, st.kid
-                if st.onClick then b:SetScript("OnClick", function(_, btn) st.onClick(tab, i, btn, tal) end)
+                b.icon:SetAlpha(idle and (locked and 0.28 or 0.55) or 1)
+                local pre = tal.pre and t.byKey[tal.pre]
+                b.tal, b.plan, b.cur, b.kid = tal, plan, cur, st.kid
+                b.preName = pre and KG.TalentName(pre) or nil
+                b.liveTab, b.liveIdx = tal.liveTab, tal.liveIdx
+                if st.onClick then b:SetScript("OnClick", function(_, btn) st.onClick(tab, tal, btn) end)
                 else b:SetScript("OnClick", nil) end
                 b:Show()
             end
@@ -1113,10 +1125,6 @@ pages.talents = {
     end,
     build = function(p)
         p.emptyKid = EmptyState(p, "Trage zuerst ein, welche Klasse dein Kind spielt. Danach kannst du hier die Skillung planen.", "Mein Kind eintragen", function() ShowPage("partner") end)
-        p.noTree = EmptyState(p, "", "", function()
-            if IsParent() then KG.RequestTree() else KG.TalentDump() end
-        end)
-        p.noTree:SetSize(BODY_W, 190)
 
         p.main = CreateFrame("Frame", nil, p)
         p.main:SetAllPoints()
@@ -1139,8 +1147,8 @@ pages.talents = {
                 table.remove(picks)
                 if #picks > 0 then KG.SetBuild(p.cls, picks) else KG.db.builds[p.cls] = nil end
                 KG.RefreshUI()
-            elseif p.nextPick and LearnTalent then
-                pcall(LearnTalent, p.nextPick.tab, p.nextPick.idx)
+            elseif p.nextPick and p.liveTab and LearnTalent then
+                pcall(LearnTalent, p.liveTab, p.liveIdx)
                 if C_Timer and C_Timer.After then C_Timer.After(0.6, function() KG.RefreshUI() end) else KG.RefreshUI() end
             end
         end)
@@ -1150,6 +1158,7 @@ pages.talents = {
         p.view:SetPoint("TOPLEFT", 0, -74)
 
         p.b1 = Btn(p.main, "", 210, 30, "primary", function()
+            if not p.cls then return end
             if IsParent() then KG.SendBuild(p.cls) else KG.RequestBuild() end
         end)
         p.b1:SetPoint("BOTTOMLEFT", 0, 0)
@@ -1157,6 +1166,7 @@ pages.talents = {
         p.code:SetPoint("LEFT", p.b1, "RIGHT", 8, 0)
         p.code:SetMaxLetters(0)
         p.b2 = Btn(p.main, "", 170, 30, "ghost", function()
+            if not p.cls then return end
             if IsParent() then
                 p.code:SetText(KG.EncodeBuild(p.cls) or "")
                 p.code:SetFocus()
@@ -1178,81 +1188,87 @@ pages.talents = {
         p.info:SetPoint("BOTTOMLEFT", 0, 36)
         p.info:SetWidth(BODY_W)
     end,
-    refresh = function(p)
+    refresh = function(p, keepInfo)
         local db, parent = KG.db, IsParent()
         local cls = TalentClass()
         p.cls = cls
         p.emptyKid:Hide()
-        p.noTree:Hide()
         p.main:Hide()
         if not cls then p.emptyKid:Show() return end
 
-        local tree, live = KG.TreeFor(cls)
+        local tree, info, mismatch = KG.TreeFor(cls)
         if not tree then
-            if parent then
-                p.noTree.text:SetText(("Die Talentbäume für %s liegen hier noch nicht vor. Seid ihr in einer Gruppe und hat %s das Addon, schickt es dir die Bäume auf Knopfdruck. Alternativ öffnest du diese Seite auf einem eigenen Charakter derselben Klasse."):format(KG.ClassName(cls), db.partner.name))
-                p.noTree.btn:SetLabel("Talentbäume anfragen")
-            else
-                p.noTree.text:SetText("Die Talentbäume konnten nicht aus dem Spiel gelesen werden. Starte die Diagnose und gib die Datei an deine Begleitung weiter. Der Pfad steht danach im Chat.")
-                p.noTree.btn:SetLabel("Diagnose starten")
-            end
-            p.noTree:Show()
+            p.emptyKid.text:SetText("Für diese Klasse liegen keine Talentdaten vor.")
+            p.emptyKid.btn:Hide()
+            p.emptyKid:Show()
             return
         end
         p.main:Show()
 
         local build = db.builds[cls]
         local picks = KG.ParsePicks(build and build.picks or "")
-        local planned, nextPick = KG.BuildProgress(picks, (not parent and live) and KG.TalentRank or nil)
+        local rankFn = (not parent) and KG.RankFn(tree, info) or nil
+        local planned, nextPick = KG.BuildProgress(picks, rankFn)
         p.nextPick = nextPick
-        p.info:SetText("")
+        p.liveTab, p.liveIdx = nil, nil
+        if nextPick then p.liveTab, p.liveIdx = KG.LiveRef(tree, info, nextPick.tab, nextPick.key) end
+        if not keepInfo then p.info:SetText("") end
+        local warn = mismatch and ("\n" .. Colored("Die eingebauten Talentdaten passen nicht zu deinem Spiel. Angezeigt wird dein Baum aus dem Spiel, Voraussetzungen werden nicht geprüft.", C.pink)) or ""
 
         if parent then
-            local last = picks[#picks]
-            local lastTal = last and tree.tabs[last.tab] and tree.tabs[last.tab].talents[last.idx]
-            p.msg:SetText(("Skillung für %s (%s): %d Punkte verplant.%s\nLinksklick setzt einen Punkt, Rechtsklick nimmt ihn zurück."):format(
-                db.partner.name, ClassText(cls), #picks, lastTal and (" Zuletzt: " .. lastTal.name .. ".") or ""))
+            local n = #picks
+            p.msg:SetText(("Skillung für %s (%s): %d von %d Punkten verplant.%s\nLinksklick setzt einen Punkt, Rechtsklick nimmt ihn zurück."):format(
+                db.partner.name, ClassText(cls), n, KG.MAX_POINTS, n > 0 and (" Punkt " .. n .. " gehört zu Level " .. KG.PointLevel(n) .. ".") or ""))
             p.act1:SetLabel("Letzten Punkt zurück")
-            p.act1:SetShown(#picks > 0)
-            p.act2:SetShown(#picks > 0)
+            p.act1:SetShown(n > 0)
+            p.act2:SetShown(n > 0)
             p.b1:SetLabel("An mein Kind senden")
             p.b2:SetLabel("Code zeigen")
         else
             local free = KG.UnspentPoints()
-            local tal = nextPick and tree.tabs[nextPick.tab] and tree.tabs[nextPick.tab].talents[nextPick.idx]
+            local tab = nextPick and tree.tabs[nextPick.tab]
+            local tal = tab and tab.byKey[nextPick.key]
             if not build then
-                p.msg:SetText("Noch keine Skillung erhalten. Bitte deine Begleitung, sie dir zu schicken, oder frage sie unten an.")
+                p.msg:SetText("Noch keine Skillung erhalten. Bitte deine Begleitung, sie dir zu schicken, oder frage sie unten an." .. warn)
             elseif tal then
                 p.msg:SetText((free > 0 and ("Du hast " .. Colored(free .. (free == 1 and " freien Punkt" or " freie Punkte"), C.mint) .. ". ") or "")
-                    .. "Nächster Punkt: " .. Colored(tal.name, C.sun) .. " im Baum " .. tree.tabs[nextPick.tab].name
-                    .. ".\nSkillung von " .. (build.author or "?") .. (build.time ~= "" and (", " .. build.time) or "") .. ". Das grün umrandete Talent ist als nächstes dran.")
+                    .. "Nächster Punkt (Level " .. KG.PointLevel(nextPick.n) .. "): " .. Colored(KG.TalentName(tal), C.sun) .. " im Baum " .. tab.name
+                    .. ".\nSkillung von " .. (build.author or "?") .. (build.time ~= "" and (", " .. build.time) or "") .. ". Das grün umrandete Talent ist als nächstes dran." .. warn)
             elseif nextPick then
-                p.msg:SetText(Colored("Die Skillung passt nicht mehr zu deinen Talentbäumen, zum Beispiel nach einem Patch.", C.pink) .. "\nBitte deine Begleitung um eine neue Skillung.")
+                p.msg:SetText(Colored("Die Skillung enthält ein Talent, das es in deinem Spiel nicht gibt, zum Beispiel nach einem Patch.", C.pink) .. "\nBitte deine Begleitung um eine neue Skillung." .. warn)
+            elseif not info then
+                p.msg:SetText("Die Talente konnten im Spiel nicht gelesen werden, deshalb kann der Fortschritt nicht angezeigt werden. Die Skillung ist trotzdem gespeichert.")
             else
-                p.msg:SetText("Alle geplanten Punkte sind gesetzt. Gut gemacht!\nSkillung von " .. (build.author or "?") .. ".")
+                p.msg:SetText("Alle geplanten Punkte sind gesetzt. Gut gemacht!\nSkillung von " .. (build.author or "?") .. "." .. warn)
             end
             p.act1:SetLabel("Diesen Punkt lernen")
-            p.act1:SetShown(tal ~= nil and free > 0 and live and LearnTalent ~= nil)
+            p.act1:SetShown(tal ~= nil and free > 0 and p.liveTab ~= nil and LearnTalent ~= nil)
             p.act2:Hide()
             p.b1:SetLabel("Skillung anfragen")
             p.b2:SetLabel("Code übernehmen")
         end
 
         p.view:Render(tree, {
-            planned = planned, nextPick = nextPick, kid = not parent, live = live,
-            onClick = parent and function(tab, idx, btn, tal)
+            planned = planned, nextPick = nextPick, kid = not parent, rankFn = rankFn,
+            canAdd = parent and function(tab, tal) return KG.WhyNot(tree, picks, tab, tal.key) == nil end or nil,
+            onClick = parent and function(tab, tal, btn)
                 local list = KG.ParsePicks((db.builds[cls] or {}).picks or "")
+                local note = ""
                 if btn == "RightButton" then
-                    for n = #list, 1, -1 do
-                        if list[n].tab == tab and list[n].idx == idx then table.remove(list, n) break end
-                    end
+                    local dropped
+                    list, dropped = KG.RemovePick(tree, list, tab, tal.key)
+                    if dropped > 0 then note = ("Zusätzlich %d später gesetzte Punkte entfernt, weil sie ohne diesen Punkt nicht gehen."):format(dropped) end
                 else
-                    local c = 0
-                    for _, q in ipairs(list) do if q.tab == tab and q.idx == idx then c = c + 1 end end
-                    if c < tal.max and #list < 200 then list[#list + 1] = { tab = tab, idx = idx } end
+                    local why = KG.WhyNot(tree, list, tab, tal.key)
+                    if why then
+                        p.info:SetText(Colored(why, C.pink))
+                        return
+                    end
+                    list[#list + 1] = { tab = tab, key = tal.key }
                 end
                 if #list > 0 then KG.SetBuild(cls, list) else db.builds[cls] = nil end
                 KG.RefreshUI()
+                if note ~= "" then p.info:SetText(Colored(note, C.pink)) end
             end or nil,
         })
     end,
